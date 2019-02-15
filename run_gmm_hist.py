@@ -3,12 +3,15 @@
  #  the acceleration potential comparing to full list of image values
  # Example application: color based image segmentation
  #
+ # USAGE: EXAMPLE: python run_gmm_hist.py -i https://c402277.ssl.cf1.rackcdn.com/photos/11552/images/hero_small/rsz_namibia_will_burrard_lucas_wwf_us_1.jpg?1462219623
+ #
  # ToDo: Development steps:
  # 1. Get image, calc histogram
  # 2. K-means clustering on grey levels
  # 3. Test program: segment(im):   image --> hist --> cluster(K-means) --> classify = back prop. pixels to clusters --> Display as segmentation
  #
  # 4. * K-means clustering on histogram
+ # --------------------
  # 5. K-means on RGB vlues (3D)
  # 6. Get RGB hist (quantize to <256^3 ?)
  # 6. K-means (RGB hist)
@@ -18,7 +21,7 @@
  #   -  MLE
  #   -  Velassis adaptive
 
-im_url =   'https://upload.wikimedia.org/wikipedia/he/2/24/Lenna.png'
+IM_URL =   'https://upload.wikimedia.org/wikipedia/he/2/24/Lenna.png'
   # https://cdn12.picryl.com/photo/2016/12/31/girl-portrait-face-people-8dd9eb-1024.jpg
 
 # import urllib2 - https://stackoverflow.com/questions/22676/how-do-i-download-a-file-over-http-using-python
@@ -37,12 +40,19 @@ import scipy
 import scipy.signal as scipysig
 
 from sklearn.mixture import GaussianMixture
+import argparse
+
 
 def main():
-    # my code here
+    #--- Parse params ---
+    ap = argparse.ArgumentParser("segment image using GMM on histogram")
+    ap.add_argument("-i", "--in", required=False, default = IM_URL, help="input imge file or URL")
+    args = vars(ap.parse_args())
+
 
     params={'use_color':False}
 
+    im_url = args['in']
     im_name=path.split(im_url)[1]
     if not path.isfile(im_name):
         im_name = wget.download(im_url )
@@ -87,21 +97,20 @@ def main():
     plt.title("hist(img)")
     plt.show()
     # ---------- KMw
-    # ~6[sec]
-    num_clusters=5
-    kmeans = KMeans(n_clusters=num_clusters, random_state=0).fit(np.reshape(img,(img.size, 1)))
-    # >> > kmeans = KMeans(n_clusters=2, random_state=0).fit(X)
-
-    cluster_centers = np.round(kmeans.cluster_centers_).astype(int)
-
-    # GMM = GaussianMixture(n_components=num_clusters,
-    #                 covariance_type='full', max_iter=20, random_state=0).fit(np.reshape(img,(img.size, 1)))
-    # GMM.mean, .covariances_
-
-    fig = plt.figure('histogram')
-    plt.plot(range(256), ar_hist_smooth, kmeans.cluster_centers_, 'b-', cluster_centers, ar_hist_smooth[cluster_centers], 'ro')
-    plt.title("hist(img)")
-    plt.show()
+    # # ~6[sec]
+    # kmeans = KMeans(n_clusters=num_clusters, random_state=0).fit(np.reshape(img,(img.size, 1)))
+    # # >> > kmeans = KMeans(n_clusters=2, random_state=0).fit(X)
+    #
+    # cluster_centers = np.round(kmeans.cluster_centers_).astype(int)
+    #
+    # # GMM = GaussianMixture(n_components=num_clusters,
+    # #                 covariance_type='full', max_iter=20, random_state=0).fit(np.reshape(img,(img.size, 1)))
+    # # GMM.mean, .covariances_
+    #
+    # fig = plt.figure('histogram')
+    # plt.plot(range(256), ar_hist_smooth, kmeans.cluster_centers_, 'b-', cluster_centers, ar_hist_smooth[cluster_centers], 'ro')
+    # plt.title("hist(img)")
+    # plt.show()
 
     #======== Hist K-Means ======
     def init(num_clusters, num_val, ar_hist_smooth):
@@ -129,34 +138,46 @@ def main():
         #  - Find Mean of each cluster_centers
 
         ar_val = np.array(range(num_val))
+        ar_mean=np.zeros((num_clusters,))
         for iCluster in range(num_clusters):
             ar_mean[iCluster] = np.mean(ar_val[ar_asign == iCluster])
         return ar_mean
 
+    def gmm_hist(num_clusters, num_val, ar_hist_smooth):
+        ar_mean = init(num_clusters, num_val, ar_hist_smooth)
 
+        ar_err = np.zeros((num_iter, 1))
+        for iIter in range(num_iter):
+            ar_asign, mean_err, ar_min_dist, ar_dist, ar_pi = maximization(num_val, ar_mean)
+            ar_mean = expectation(num_clusters, num_val, ar_asign)
+            ar_err[iIter] = mean_err
+            d_err = ar_err[iIter - 1] - ar_err[iIter]
+            if iIter > params['min_iter'] and d_err < params['dErr']:
+                print('early stop: iter = %d; dErr=%f; minErr = %f \n' % (iIter, d_err, ar_err[iIter]))
+                break
+
+        return ar_err[:iIter], ar_mean, ar_asign
     #======== Hist K-Means ======
 
 
 
     num_val = 256
     num_iter = 100
+    num_clusters=5
+
     params={'min_iter':5, 'dErr':1e-4}
+    ar_err, ar_mean, ar_asign = gmm_hist(num_clusters, num_val, ar_hist_smooth)
 
-    ar_mean = init(num_clusters, num_val, ar_hist_smooth)
+    # apply segmentation by LUT  mapping color to clusters
+    im_segment = ar_asign[img]
 
-    ar_err=np.zeros((num_iter,1))
-    for iIter in range(num_iter):
-        ar_asign, mean_err, ar_min_dist, ar_dist, ar_pi = maximization(num_val, ar_mean)
-        ar_mean = expectation(num_clusters, num_val, ar_asign)
-        ar_err[iIter] = mean_err
-        d_err = ar_err[iIter-1]-ar_err[iIter]
-        if iIter > params['min_iter'] and d_err<params['dErr']:
-            print('early stop: iter = %d; dErr=%f \n' %(iIter, d_err))
-            break
+    fig = plt.figure('segmentation')
+    plt.imshow(im_segment)
+    plt.show()
 
     fig = plt.figure('error rate')
-    # plt.plot(range(num_iter), ar_err)
-    plt.plot(range(num_iter-1), np.diff(ar_err,axis=0))  # dErr
+    plt.plot(range(len(ar_err)), ar_err)
+    # plt.plot(range(num_iter-1), np.diff(ar_err,axis=0))  # dErr
     plt.title("error(iter)")
     plt.show()
 
